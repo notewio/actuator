@@ -36,10 +36,12 @@ macro_rules! run_action {
         println!($k);
         let a = $a.get($k);
         if let Some(v) = a {
-            Command::new(v[0])
-                .args(&v[1..])
-                .spawn()
-                .expect("Failed to run action");
+            for c in v {
+                Command::new(c[0])
+                    .args(&c[1..])
+                    .spawn()
+                    .expect("Failed to run action");
+            }
         } else {
             println!("No action found");
         }
@@ -69,7 +71,12 @@ fn main() {
     let mut actions = HashMap::new();
     if let Value::Table(t) = &config["actions"] {
         for (key, value) in t {
-            let v: Vec<&str> = value.as_str().unwrap().split(" ").collect();
+            let v = value
+                .as_str()
+                .unwrap()
+                .split(";")
+                .map(|x| x.trim().split(" ").collect())
+                .collect::<Vec<Vec<&str>>>();
             if v.len() == 0 {
                 continue;
             }
