@@ -1,6 +1,6 @@
 use directories::BaseDirs;
 use evdev::{Device, EventType};
-use std::{collections::HashMap, fs};
+use std::{collections::HashMap, fs, process::Command};
 use toml::Value;
 
 struct Finger {
@@ -36,7 +36,10 @@ macro_rules! run_action {
         println!($k);
         let a = $a.get($k);
         if let Some(v) = a {
-            run_script::spawn_script!(v).unwrap();
+            Command::new(v[0])
+                .args(&v[1..])
+                .spawn()
+                .expect("Failed to run action");
         } else {
             println!("No action found");
         }
@@ -66,7 +69,11 @@ fn main() {
     let mut actions = HashMap::new();
     if let Value::Table(t) = &config["actions"] {
         for (key, value) in t {
-            actions.insert(key.as_str(), value.as_str().unwrap());
+            let v: Vec<&str> = value.as_str().unwrap().split(" ").collect();
+            if v.len() == 0 {
+                continue;
+            }
+            actions.insert(key.as_str(), v);
         }
     }
 
