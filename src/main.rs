@@ -1,55 +1,18 @@
+mod finger;
+#[macro_use]
+mod util;
+
 use directories::BaseDirs;
 use evdev::{Device, EventType};
-use std::{collections::HashMap, fs, process::Command};
+use finger::Finger;
+use std::{collections::HashMap, fs, process::Command, sync::mpsc};
 use toml::Value;
-
-struct Finger {
-    x: Vec<i32>,
-    y: Vec<i32>,
-}
-impl Finger {
-    fn new() -> Self {
-        return Finger {
-            x: vec![],
-            y: vec![],
-        };
-    }
-    fn empty(&self) -> bool {
-        self.x.len() == 0 || self.y.len() == 0
-    }
-    fn start(&self) -> (i32, i32) {
-        (self.x[0], self.y[0])
-    }
-    fn end(&self) -> (i32, i32) {
-        (self.x[self.x.len() - 1], self.y[self.y.len() - 1])
-    }
-    fn delta(&self) -> (i32, i32) {
-        (
-            self.x[self.x.len() - 1] - self.x[0],
-            self.y[self.y.len() - 1] - self.y[0],
-        )
-    }
-}
-
-macro_rules! run_action {
-    ($a: expr, $k: expr) => {
-        println!($k);
-        let a = $a.get($k);
-        if let Some(v) = a {
-            for c in v {
-                Command::new(c[0])
-                    .args(&c[1..])
-                    .spawn()
-                    .expect("Failed to run action");
-            }
-        } else {
-            println!("No action found");
-        }
-    };
-}
+use util::*;
 
 fn main() {
-    // Load configuration
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || await_usr1(tx));
+
     let base_dirs = BaseDirs::new().expect("Could not find configuration file folder");
     let config_path = base_dirs
         .config_dir()
@@ -57,17 +20,15 @@ fn main() {
         .into_os_string()
         .into_string()
         .unwrap();
-
     let config = fs::read_to_string(config_path)
         .expect("Could not read config file")
         .parse::<Value>()
         .unwrap();
-    let device_path = config["device"].as_str().unwrap();
+    let mut input_device = Device::open(config["device"].as_str().unwrap()).unwrap();
     let edge_tolerance = config["edge_tolerance"].as_integer().unwrap() as i32;
     let min_distance = config["min_distance"].as_integer().unwrap() as i32;
     let screen_height = config["screen_height"].as_integer().unwrap() as i32;
     let screen_width = config["screen_width"].as_integer().unwrap() as i32;
-
     let mut actions = HashMap::new();
     if let Value::Table(t) = &config["actions"] {
         for (key, value) in t {
@@ -84,11 +45,14 @@ fn main() {
         }
     }
 
-    let mut input_device = Device::open(device_path).unwrap();
     let mut current_finger = 0;
     let mut held_fingers = 0;
     let mut fingers = vec![];
+    let mut portrait = false;
     loop {
+        while let Ok(_) = rx.try_recv() {
+            portrait = !portrait;
+        }
         for ev in input_device.fetch_events().unwrap() {
             if ev.code() == 57 && ev.value() == -1 {
                 held_fingers -= 1;
@@ -121,16 +85,16 @@ fn main() {
                         if dx.abs() + dy.abs() < min_distance {
                         } else if dy.abs() > dx.abs() {
                             if sy < edge_tolerance {
-                                run_action!(actions, "1_from_top");
+                                run_action!(portrait, actions, "1_from_up");
                             } else if sy > screen_height - edge_tolerance {
-                                run_action!(actions, "1_from_bottom");
+                                run_action!(portrait, actions, "1_from_down");
                             }
                         } else {
                             if sx < edge_tolerance {
-                                run_action!(actions, "1_from_left");
+                                run_action!(portrait, actions, "1_from_left");
                             }
                             if sx > screen_width - edge_tolerance {
-                                run_action!(actions, "1_from_right");
+                                run_action!(portrait, actions, "1_from_right");
                             }
                         }
                     }
@@ -153,23 +117,23 @@ fn main() {
                             let (ex1, ey1) = f1.end();
                             let edist = (ex1 - ex0).pow(2) + (ey1 - ey0).pow(2);
                             if edist < sdist {
-                                run_action!(actions, "2_pinch");
+                                run_action!(portrait, actions, "2_pinch");
                             } else {
-                                run_action!(actions, "2_spread");
+                                run_action!(portrait, actions, "2_spread");
                             }
                         } else {
                             // finger 0 takes priority. is it worth calculating average here?...
                             if dy0.abs() > dx0.abs() {
                                 if dy0 > 0 {
-                                    run_action!(actions, "2_down");
+                                    run_action!(portrait, actions, "2_down");
                                 } else {
-                                    run_action!(actions, "2_up");
+                                    run_action!(portrait, actions, "2_up");
                                 }
                             } else {
                                 if dx0 > 0 {
-                                    run_action!(actions, "2_right");
+                                    run_action!(portrait, actions, "2_right");
                                 } else {
-                                    run_action!(actions, "2_left");
+                                    run_action!(portrait, actions, "2_left");
                                 }
                             }
                         }
