@@ -1,7 +1,11 @@
 use directories::ProjectDirs;
 use evdev::Device;
+use signal_hook::consts::SIGUSR1;
+use signal_hook::iterator::Signals;
 use std::fs;
 use std::process::Command;
+use std::sync::mpsc;
+use std::thread;
 
 type BoxResult<T> = Result<T, Box<dyn std::error::Error>>;
 
@@ -62,8 +66,24 @@ fn main() -> BoxResult<()> {
     let mut fingers: Vec<Finger> = vec![];
     let mut slot = 0usize;
     let mut held = 0usize;
+    let mut portrait = false;
+
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut signals = Signals::new(&[SIGUSR1]).expect("Failed to open signal hook");
+        for _ in &mut signals {
+            match tx.send(()) {
+                Ok(()) => {}
+                Err(e) => println!("Error sending signal across threads: {e}"),
+            };
+        }
+    });
 
     loop {
+        while let Ok(_) = rx.try_recv() {
+            portrait = !portrait;
+        }
+
         for ev in device.fetch_events()? {
             match ev.code() {
                 47 => slot = ev.value() as usize,
@@ -82,7 +102,11 @@ fn main() -> BoxResult<()> {
 
         if held == 0 {
             if fingers.iter().any(|x| x.dist2() > min_distance2) {
-                let action = format!("{}_{}", fingers.len(), gestures(dimensions, &fingers[0]));
+                let action = format!(
+                    "{}_{}",
+                    fingers.len(),
+                    gestures(dimensions, &fingers[0], portrait)
+                );
                 match actions.get(&action) {
                     Some(toml::Value::String(value)) => {
                         let lines = value.split(";");
@@ -105,11 +129,16 @@ fn main() -> BoxResult<()> {
     }
 }
 
-fn gestures(dimensions: (i32, i32, i32), f: &Finger) -> &str {
-    let (sx, sy) = f.start();
-    let (sw, sh, tolerance) = dimensions;
+fn gestures(dimensions: (i32, i32, i32), f: &Finger, portrait: bool) -> &str {
+    let (mut sx, mut sy) = f.start();
+    let (mut sw, mut sh, tolerance) = dimensions;
 
-    if f.vertical() {
+    if portrait {
+        std::mem::swap(&mut sx, &mut sy);
+        std::mem::swap(&mut sw, &mut sh);
+    }
+
+    if f.vertical() ^ portrait {
         if sy < tolerance {
             return "from_top";
         } else if sy > sh - tolerance {
