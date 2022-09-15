@@ -10,3 +10,4 @@ evdev = "0.11.4"
 toml = "0.5.8"
 directories = "4.0.1"
 signal-hook = "0.3.13"
+serde = { version = "1.0", features = ["derive"] }
